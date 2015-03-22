@@ -362,17 +362,18 @@ function compareMortgages(m0, m1, investrate, verbose)
 	    [ 'loan 1 investment balance',  v0 ],
 	    [ 'loan 2 total interest paid', i1 ],
 	    [ 'loan 2 investment balance',  v1 ],
-	    [ ],
-	    [ 'loan 1 interest cost, relative to loan 2',    idelta ],
-	    [ 'loan 1 opportunity cost, relative to loan 2', vdelta ],
-	    [ 'LOAN 1 NET COST, RELATIVE TO LOAN 2',         idelta + vdelta ]
+	    [ '' ],
+	    [ 'LOAN 1 NET COST (RELATIVE TO LOAN 2)' ],
+	    [ 'interest',         idelta ],
+	    [ 'opportunity cost', vdelta ],
+	    [ 'total',            idelta + vdelta ]
 	].forEach(function (row) {
-		if (row.length === 0) {
-			printf('\n');
+		if (row.length < 2) {
+			printf('%s\n', row[0]);
 			return;
 		}
 
-		printf('%-44s  $ %10s\n', row[0] + ':', row[1].toFixed(2));
+		printf('%-27s  $ %10s\n', row[0] + ':', row[1].toFixed(2));
 	});
 }
 
