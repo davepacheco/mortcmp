@@ -14,14 +14,32 @@ var VError = require('verror');
 var createMortgage = require('../lib/mortgage').createMortgage;
 
 var fprintf = mod_extsprintf.fprintf;
+var printf = mod_extsprintf.printf;
+var sprintf = mod_extsprintf.sprintf;
+
 var mcArg0 = mod_path.basename(process.argv[1]);
 var mcUsageMessage = [
-    'usage: %s [--term=TERM] [--rate=RATE1[:PERIOD1] ...] [--schedule] AMOUNT',
+    'usage: %s [--term=TERM] [--rate=RATE1[:PERIOD1] ...] [--schedule] ',
+    '    --compare --investment=INVRATE ... PRINCIPAL',
     '',
     'Computes an mortization schedule for a loan of term TERM with interest ',
     'rate RATE1 for a the initial period PERIOD1, optional RATE2 for period ',
-    'PERIOD2, and so on.  TERM and each PERIOD can be specified as a number ',
-    'of months by default, or with years using a "y" suffix (e.g., "10y").',
+    'PERIOD2, and so on.  TERM and each PERIOD can be specified as a number of',
+    'months by default, or with years using a "y" suffix (e.g., "10y"). If',
+    '--compare is not specified, a summary of this loan is printed.',
+    '',
+    'If --compare is specified, then the command-line options describe two ',
+    'different loans having the same PRINCIPAL.  The --term and --rate options',
+    'that precede --compare describe the first loan.  The remaining --term and',
+    '--rate options describe the second loan.  The amortization schedules for ',
+    'both loans are compared on a month-to-month basis and a measure of ',
+    'opportunity cost is simulated as follows: whenever one loan\'s payment ',
+    'exceeds the other\'s for a given month, the program simulates depositing ',
+    'the difference into an account earning INVRATE annually.  Each loan has ',
+    'a separate account.  The value of this account at the end of the loan ',
+    'term is a measure of partial opportunity cost of the other loan.  (The ',
+    'difference in these values is a measure of the actual opportunity cost of',
+    'each loan.)',
     '',
     '    --schedule   print the actual amortization schedule in addition to ',
     '                 the loan summary information'
@@ -29,24 +47,48 @@ var mcUsageMessage = [
 
 function main()
 {
-	var parser, option;
-	var mortoptions, printsched;
-	var c, rate, period, mortgage;
+	var parser, option;			/* for option parsing */
+	var mortoptions, mortoptions0;		/* mortgage params */
+	var mortgage, mortgage0;		/* mortgage objects */
+	var printsched, investrate, compare;	/* misc options */
+	var c, rate, period;			/* scoped to switch */
+
+	printsched = false;
+	investrate = null;
+	compare = false;
 
 	mortoptions = {
 	    'principal': null,
 	    'term': 360,
 	    'periods': []
 	};
+
 	parser = new mod_getopt.BasicParser(
-	    'r:(rate)s(schedule)t:(term)', process.argv);
+	    'c(compare)i:(investment)r:(rate)s(schedule)t:(term)',
+	    process.argv);
 	while ((option = parser.getopt()) !== undefined) {
 		switch (option.option) {
-		case 't':
-			mortoptions.term = parseTimeValue(option.optarg);
-			if (mortoptions.term === null)
-				usage(new VError('bad value for --term: "%s"',
-				    option.option));
+		case 'c':
+			if (compare) {
+				usage(new VError(
+				    '--compare may only be specified once'));
+			}
+			compare = true;
+			mortoptions0 = mortoptions;
+			mortoptions = {
+			    'principal': null,
+			    'term': 360,
+			    'periods': []
+			};
+			break;
+
+		case 'i':
+			rate = parseFloat(option.optarg);
+			if (isNaN(rate) || rate < 0 || rate > 1) {
+				usage(new VError('bad value for ' +
+				    '--investment: "%s"', option.optarg));
+			}
+			investrate = rate;
 			break;
 
 		case 'r':
@@ -84,6 +126,13 @@ function main()
 			printsched = true;
 			break;
 
+		case 't':
+			mortoptions.term = parseTimeValue(option.optarg);
+			if (mortoptions.term === null)
+				usage(new VError('bad value for --term: "%s"',
+				    option.option));
+			break;
+
 		default:
 			/* message printed by getopt */
 			usage();
@@ -92,7 +141,7 @@ function main()
 	}
 
 	if (parser.optind() >= process.argv.length)
-		usage(new VError('missing required argument: "amount"'));
+		usage(new VError('missing required argument: "principal"'));
 
 	if (parser.optind() < process.argv.length - 1)
 		usage(new VError('extra arguments'));
@@ -101,9 +150,80 @@ function main()
 	if (isNaN(mortoptions.principal) || mortoptions.principal <= 0)
 		usage(new VError('invalid principal'));
 
+	if (compare) {
+		mortoptions0.principal = mortoptions.principal;
+		mortgage0 = createMortgage(mortoptions0);
+		if (mortgage0 instanceof Error)
+			fatal(mortgage0);
+	}
+
 	mortgage = createMortgage(mortoptions);
 	if (mortgage instanceof Error)
 		fatal(mortgage);
+
+	if (compare) {
+		printMortgage('loan 1', mortgage0, printsched);
+		printf('\n');
+		printMortgage('loan 2', mortgage, printsched);
+		printf('\n');
+		compareMortgages(mortgage0, mortgage, investrate);
+	} else {
+		printMortgage('loan', mortgage, printsched);
+	}
+}
+
+function printMortgage(label, mortgage, printsched)
+{
+	var term, schedule, periodrows;
+	var i, laststart, lastrate, rate;
+
+	term = mortgage.term();
+	printf('%s details: $%s paid monthly over %d months\n',
+	    label, mortgage.principal(), term);
+
+	schedule = mortgage.schedule();
+	periodrows = [];
+	laststart = 0;
+	lastrate = schedule[0].mrate * 12;
+	for (i = 1; i < schedule.length; i++) {
+		rate = schedule[i].mrate * 12;
+		if (rate != lastrate ||
+		    schedule[i].total != schedule[laststart].total) {
+			periodrows.push([
+			    '',
+			    sprintf('Months %3d to %3d', laststart + 1, i - 1),
+			    sprintf('%5s%%', (100 * lastrate).toFixed(3)),
+			    sprintf('$%7s', schedule[i - 1].total.toFixed(2)),
+			    sprintf('$ %9s',
+			    schedule[laststart].pbefore.toFixed(2)),
+			    sprintf('$ %9s', schedule[i - 1].pafter.toFixed(2))
+			    ]);
+			laststart = i;
+			lastrate = rate;
+		}
+	}
+
+	periodrows.push([
+	    '',
+	    sprintf('Months %3d to %3d', laststart + 1, i),
+	    sprintf('%5s%%', (100 * lastrate).toFixed(3)),
+	    sprintf('$%7s', schedule[i - 1].total.toFixed(2)),
+	    sprintf('$ %9s',
+	    schedule[laststart].pbefore.toFixed(2)),
+	    sprintf('$ %9s', schedule[i - 1].pafter.toFixed(2))
+	]);
+
+	mod_tab.emitTable({
+	    'rows': periodrows,
+	    'columns': [
+		{ 'label': '',         'width': 4  },
+		{ 'label': '',         'width': 17 },
+		{ 'label': 'RATE',     'width': 7,  'align': 'right'  },
+		{ 'label': 'PAYMENT',  'width': 9,  'align': 'right'  },
+		{ 'label': 'P BEFORE', 'width': 12, 'align': 'right' },
+		{ 'label': 'P AFTER',  'width': 12, 'align': 'right' }
+	    ]
+	});
 
 	if (printsched) {
 		mod_tab.emitTable({
@@ -115,9 +235,9 @@ function main()
 		        { 'label': 'PRINCIPAL', 'width': 9, 'align': 'right' },
 		        { 'label': 'P AFTER',   'width': 9, 'align': 'right' }
 		    ],
-		    'rows': mortgage.schedule().map(function (p, i) {
+		    'rows': schedule.map(function (p, m) {
 			return ({
-			    'MONTH': i + 1,
+			    'MONTH': m + 1,
 			    'P BEFORE': p.pbefore.toFixed(2),
 			    'PAYMENT': p.total.toFixed(2),
 			    'INTEREST': p.interest.toFixed(2),
@@ -127,6 +247,10 @@ function main()
 		    })
 		});
 	}
+}
+
+function compareMortgages(m0, m1)
+{
 }
 
 function usage(err)
