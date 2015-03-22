@@ -22,7 +22,7 @@ var mcUsageMessage = [
     'usage: %s [--term=TERM] [--rate=RATE1[:PERIOD1] ...] [--schedule] ',
     '    --compare --investment=INVRATE ... PRINCIPAL',
     '',
-    'Computes an mortization schedule for a loan of term TERM with interest ',
+    'Computes an amortization schedule for a loan of term TERM with interest ',
     'rate RATE1 for a the initial period PERIOD1, optional RATE2 for period ',
     'PERIOD2, and so on.  TERM and each PERIOD can be specified as a number of',
     'months by default, or with years using a "y" suffix (e.g., "10y"). If',
@@ -63,9 +63,16 @@ function main()
 	    'periods': []
 	};
 
-	parser = new mod_getopt.BasicParser(
-	    'c(compare)i:(investment)r:(rate)t:(term)v(verbose)',
-	    process.argv);
+	/*
+	 * See the usage message above.
+	 */
+	parser = new mod_getopt.BasicParser([
+	    'c(compare)',
+	    'i:(investment)',
+	    'r:(rate)',
+	    't:(term)',
+	    'v(verbose)'
+	].join(''), process.argv);
 	while ((option = parser.getopt()) !== undefined) {
 		switch (option.option) {
 		case 'c':
@@ -193,6 +200,9 @@ function fatal(err)
 	process.exit(1);
 }
 
+/*
+ * Prints summary information about a mortgage.
+ */
 function printMortgage(label, mortgage, verbose)
 {
 	var term, schedule, periodrows;
@@ -271,6 +281,10 @@ function printMortgage(label, mortgage, verbose)
 	}
 }
 
+/*
+ * Compares mortgages "m0" and "m1".  Prints out a summary of the overall costs,
+ * including opportunity costs, of each loan as compared with the other.
+ */
 function compareMortgages(m0, m1, investrate, verbose)
 {
 	var s0, s1;		/* schedules for each loan */
@@ -304,12 +318,12 @@ function compareMortgages(m0, m1, investrate, verbose)
 		if (verbose) {
 			details.push({
 			    'MONTH': i + 1,
-			    'M0 PAY': p0.toFixed(2),
-			    'M1 PAY': p1.toFixed(2),
-			    'M0 DEP': a0[i].deposit.toFixed(2),
-			    'M0 BAL': a0[i].balanceAfter.toFixed(2),
-			    'M1 DEP': a1[i].deposit.toFixed(2),
-			    'M1 BAL': a1[i].balanceAfter.toFixed(2)
+			    'M1 PAY': p0.toFixed(2),
+			    'M2 PAY': p1.toFixed(2),
+			    'M1 DEP': a0[i].deposit.toFixed(2),
+			    'M1 BAL': a0[i].balanceAfter.toFixed(2),
+			    'M2 DEP': a1[i].deposit.toFixed(2),
+			    'M2 BAL': a1[i].balanceAfter.toFixed(2)
 			});
 		}
 	}
@@ -322,20 +336,12 @@ function compareMortgages(m0, m1, investrate, verbose)
 			'width': 5,
 			'align': 'right'
 		    }, {
-		        'label': 'M0 PAY',
-			'width': 8,
-			'align': 'right'
-		    }, {
 		        'label': 'M1 PAY',
 			'width': 8,
 			'align': 'right'
 		    }, {
-		        'label': 'M0 DEP',
-			'width': 9,
-			'align': 'right'
-		    }, {
-		        'label': 'M0 BAL',
-			'width': 10,
+		        'label': 'M2 PAY',
+			'width': 8,
 			'align': 'right'
 		    }, {
 		        'label': 'M1 DEP',
@@ -343,6 +349,14 @@ function compareMortgages(m0, m1, investrate, verbose)
 			'align': 'right'
 		    }, {
 		        'label': 'M1 BAL',
+			'width': 10,
+			'align': 'right'
+		    }, {
+		        'label': 'M2 DEP',
+			'width': 9,
+			'align': 'right'
+		    }, {
+		        'label': 'M2 BAL',
 			'width': 10,
 			'align': 'right'
 		    } ]
@@ -377,6 +391,12 @@ function compareMortgages(m0, m1, investrate, verbose)
 	});
 }
 
+/*
+ * Given a history for a hypothetical investment account, deposit "delta" into
+ * the account and apply interest using "investrate" (an annualized rate, which
+ * is divided by 12 internally because this function is called to represent
+ * monthly changes).
+ */
 function accumDelta(history, delta, investrate)
 {
 	var deposit, mrate, last, balanceBefore, gain, balanceAfter;
@@ -407,6 +427,12 @@ function accumDelta(history, delta, investrate)
 	});
 }
 
+/*
+ * Return the number of months represented by the given input string.  The time
+ * value should be a positive integer with an optional "y" suffix.  With no
+ * suffix, the number denotes the number of months.  With "y", the number
+ * denotes years.  If the input is invalid, returns null.
+ */
 function parseTimeValue(period)
 {
 	var num, years;
