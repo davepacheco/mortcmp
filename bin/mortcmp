@@ -1,0 +1,168 @@
+#!/usr/bin/env node
+/* vim: set ft=javascript: */
+
+/*
+ * mortcmp: print fixed-rate and ARM mortgage details
+ */
+
+var mod_extsprintf = require('extsprintf');
+var mod_getopt = require('posix-getopt');
+var mod_path = require('path');
+var mod_tab = require('tab');
+var VError = require('verror');
+
+var createMortgage = require('../lib/mortgage').createMortgage;
+
+var fprintf = mod_extsprintf.fprintf;
+var mcArg0 = mod_path.basename(process.argv[1]);
+var mcUsageMessage = [
+    'usage: %s [--term=TERM] [--rate=RATE1[:PERIOD1] ...] [--schedule] AMOUNT',
+    '',
+    'Computes an mortization schedule for a loan of term TERM with interest ',
+    'rate RATE1 for a the initial period PERIOD1, optional RATE2 for period ',
+    'PERIOD2, and so on.  TERM and each PERIOD can be specified as a number ',
+    'of months by default, or with years using a "y" suffix (e.g., "10y").',
+    '',
+    '    --schedule   print the actual amortization schedule in addition to ',
+    '                 the loan summary information'
+].join('\n');
+
+function main()
+{
+	var parser, option;
+	var mortoptions, printsched;
+	var c, rate, period, mortgage;
+
+	mortoptions = {
+	    'principal': null,
+	    'term': 360,
+	    'periods': []
+	};
+	parser = new mod_getopt.BasicParser(
+	    'r:(rate)s(schedule)t:(term)', process.argv);
+	while ((option = parser.getopt()) !== undefined) {
+		switch (option.option) {
+		case 't':
+			mortoptions.term = parseTimeValue(option.optarg);
+			if (mortoptions.term === null)
+				usage(new VError('bad value for --term: "%s"',
+				    option.option));
+			break;
+
+		case 'r':
+			rate = null;
+			period = null;
+			c = option.optarg.lastIndexOf(':');
+			if (c != -1) {
+				rate = option.optarg.substr(0, c);
+				period = option.optarg.substr(c + 1);
+			} else {
+				rate = option.optarg;
+			}
+
+			rate = parseFloat(rate);
+			if (isNaN(rate) || rate < 0 || rate > 1) {
+				usage(new VError('bad value for rate part of ' +
+				    '--rate: "%s"', option.optarg));
+			}
+
+			if (period !== null) {
+				period = parseTimeValue(period);
+				if (period === null) {
+					usage(new VError('bad value for ' +
+					    'period part of --rate: "%s"',
+					    option.optarg));
+				}
+			}
+			mortoptions.periods.push({
+			    'rate': rate,
+			    'period': period
+			});
+			break;
+
+		case 's':
+			printsched = true;
+			break;
+
+		default:
+			/* message printed by getopt */
+			usage();
+			break;
+		}
+	}
+
+	if (parser.optind() >= process.argv.length)
+		usage(new VError('missing required argument: "amount"'));
+
+	if (parser.optind() < process.argv.length - 1)
+		usage(new VError('extra arguments'));
+
+	mortoptions.principal = Number(process.argv[parser.optind()]);
+	if (isNaN(mortoptions.principal) || mortoptions.principal <= 0)
+		usage(new VError('invalid principal'));
+
+	mortgage = createMortgage(mortoptions);
+	if (mortgage instanceof Error)
+		fatal(mortgage);
+
+	if (printsched) {
+		mod_tab.emitTable({
+		    'columns': [
+			{ 'label': 'MONTH',     'width': 5, 'align': 'right' },
+		        { 'label': 'P BEFORE',  'width': 9, 'align': 'right' },
+		        { 'label': 'PAYMENT',   'width': 9, 'align': 'right' },
+		        { 'label': 'INTEREST',  'width': 9, 'align': 'right' },
+		        { 'label': 'PRINCIPAL', 'width': 9, 'align': 'right' },
+		        { 'label': 'P AFTER',   'width': 9, 'align': 'right' }
+		    ],
+		    'rows': mortgage.schedule().map(function (p, i) {
+			return ({
+			    'MONTH': i + 1,
+			    'P BEFORE': p.pbefore.toFixed(2),
+			    'PAYMENT': p.total.toFixed(2),
+			    'INTEREST': p.interest.toFixed(2),
+			    'PRINCIPAL': p.principal.toFixed(2),
+			    'P AFTER': p.pafter.toFixed(2)
+			});
+		    })
+		});
+	}
+}
+
+function usage(err)
+{
+	if (err)
+		fprintf(process.stderr, '%s: %s\n', mcArg0, err.message);
+	fprintf(process.stderr, mcUsageMessage + '\n', mcArg0);
+	process.exit(2);
+}
+
+function fatal(err)
+{
+	fprintf(process.stderr, '%s: %s\n', mcArg0, err.message);
+	process.exit(1);
+}
+
+function parseTimeValue(period)
+{
+	var num, years;
+
+	period = period.trim();
+	if (period.charAt(period.length - 1) == 'y') {
+		period = period.substr(0, period.length - 1);
+		years = true;
+	} else {
+		years = false;
+	}
+
+	num = Math.floor(Number(period));
+	if (isNaN(num) || num < 0)
+		return (null);
+
+	if (years)
+		num *= 12;
+
+	return (num);
+}
+
+main();
