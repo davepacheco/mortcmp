@@ -50,10 +50,10 @@ function main()
 	var parser, option;			/* for option parsing */
 	var mortoptions, mortoptions0;		/* mortgage params */
 	var mortgage, mortgage0;		/* mortgage objects */
-	var printsched, investrate, compare;	/* misc options */
+	var verbose, investrate, compare;	/* misc options */
 	var c, rate, period;			/* scoped to switch */
 
-	printsched = false;
+	verbose = false;
 	investrate = null;
 	compare = false;
 
@@ -64,7 +64,7 @@ function main()
 	};
 
 	parser = new mod_getopt.BasicParser(
-	    'c(compare)i:(investment)r:(rate)s(schedule)t:(term)',
+	    'c(compare)i:(investment)r:(rate)t:(term)v(verbose)',
 	    process.argv);
 	while ((option = parser.getopt()) !== undefined) {
 		switch (option.option) {
@@ -122,15 +122,15 @@ function main()
 			});
 			break;
 
-		case 's':
-			printsched = true;
-			break;
-
 		case 't':
 			mortoptions.term = parseTimeValue(option.optarg);
 			if (mortoptions.term === null)
 				usage(new VError('bad value for --term: "%s"',
 				    option.option));
+			break;
+
+		case 'v':
+			verbose = true;
 			break;
 
 		default:
@@ -140,11 +140,18 @@ function main()
 		}
 	}
 
-	if (parser.optind() >= process.argv.length)
+	if (parser.optind() >= process.argv.length) {
 		usage(new VError('missing required argument: "principal"'));
+	}
 
-	if (parser.optind() < process.argv.length - 1)
+	if (parser.optind() < process.argv.length - 1) {
 		usage(new VError('extra arguments'));
+	}
+
+	if (compare && investrate === null) {
+		usage(new VError('--investment must be specified with ' +
+		    '--compare'));
+	}
 
 	mortoptions.principal = Number(process.argv[parser.optind()]);
 	if (isNaN(mortoptions.principal) || mortoptions.principal <= 0)
@@ -162,17 +169,31 @@ function main()
 		fatal(mortgage);
 
 	if (compare) {
-		printMortgage('loan 1', mortgage0, printsched);
+		printMortgage('loan 1', mortgage0, false);
 		printf('\n');
-		printMortgage('loan 2', mortgage, printsched);
+		printMortgage('loan 2', mortgage, false);
 		printf('\n');
-		compareMortgages(mortgage0, mortgage, investrate);
+		compareMortgages(mortgage0, mortgage, investrate, verbose);
 	} else {
-		printMortgage('loan', mortgage, printsched);
+		printMortgage('loan', mortgage, verbose);
 	}
 }
 
-function printMortgage(label, mortgage, printsched)
+function usage(err)
+{
+	if (err)
+		fprintf(process.stderr, '%s: %s\n', mcArg0, err.message);
+	fprintf(process.stderr, mcUsageMessage + '\n', mcArg0);
+	process.exit(2);
+}
+
+function fatal(err)
+{
+	fprintf(process.stderr, '%s: %s\n', mcArg0, err.message);
+	process.exit(1);
+}
+
+function printMortgage(label, mortgage, verbose)
 {
 	var term, schedule, periodrows;
 	var i, laststart, lastrate, rate;
@@ -225,15 +246,16 @@ function printMortgage(label, mortgage, printsched)
 	    ]
 	});
 
-	if (printsched) {
+	if (verbose) {
+		printf('\n');
 		mod_tab.emitTable({
 		    'columns': [
 			{ 'label': 'MONTH',     'width': 5, 'align': 'right' },
-		        { 'label': 'P BEFORE',  'width': 9, 'align': 'right' },
-		        { 'label': 'PAYMENT',   'width': 9, 'align': 'right' },
-		        { 'label': 'INTEREST',  'width': 9, 'align': 'right' },
-		        { 'label': 'PRINCIPAL', 'width': 9, 'align': 'right' },
-		        { 'label': 'P AFTER',   'width': 9, 'align': 'right' }
+		        { 'label': 'P BEFORE',  'width': 11, 'align': 'right' },
+		        { 'label': 'PAYMENT',   'width': 11, 'align': 'right' },
+		        { 'label': 'INTEREST',  'width': 11, 'align': 'right' },
+		        { 'label': 'PRINCIPAL', 'width': 11, 'align': 'right' },
+		        { 'label': 'P AFTER',   'width': 11, 'align': 'right' }
 		    ],
 		    'rows': schedule.map(function (p, m) {
 			return ({
@@ -249,22 +271,139 @@ function printMortgage(label, mortgage, printsched)
 	}
 }
 
-function compareMortgages(m0, m1)
+function compareMortgages(m0, m1, investrate, verbose)
 {
+	var s0, s1;		/* schedules for each loan */
+	var p0, p1;		/* monthly payments */
+	var a0, a1;		/* investment account info */
+	var i0, i1, idelta;	/* total interest paid */
+	var v0, v1, vdelta;	/* investment account final balances */
+	var details, term, i, delta;
+
+	s0 = m0.schedule();
+	s1 = m1.schedule();
+	term = Math.max(s0.length, s1.length);
+
+	if (verbose) {
+		details = [];
+	}
+
+	a0 = [];
+	a1 = [];
+	for (i = 0; i < term; i++) {
+		/*
+		 * "delta" is the advantage for loan 0, which means it's
+		 * positive when loan 0's payment is less than loan 1's.
+		 */
+		p0 = i >= s0.length ? 0 : s0[i].total;
+		p1 = i >= s1.length ? 0 : s1[i].total;
+		delta = p1 - p0;
+		accumDelta(a0, delta, investrate);
+		accumDelta(a1, -delta, investrate);
+
+		if (verbose) {
+			details.push({
+			    'MONTH': i + 1,
+			    'M0 PAY': p0.toFixed(2),
+			    'M1 PAY': p1.toFixed(2),
+			    'M0 DEP': a0[i].deposit.toFixed(2),
+			    'M0 BAL': a0[i].balanceAfter.toFixed(2),
+			    'M1 DEP': a1[i].deposit.toFixed(2),
+			    'M1 BAL': a1[i].balanceAfter.toFixed(2)
+			});
+		}
+	}
+
+	if (verbose) {
+		mod_tab.emitTable({
+		    'rows': details,
+		    'columns': [ {
+		        'label': 'MONTH',
+			'width': 5,
+			'align': 'right'
+		    }, {
+		        'label': 'M0 PAY',
+			'width': 8,
+			'align': 'right'
+		    }, {
+		        'label': 'M1 PAY',
+			'width': 8,
+			'align': 'right'
+		    }, {
+		        'label': 'M0 DEP',
+			'width': 9,
+			'align': 'right'
+		    }, {
+		        'label': 'M0 BAL',
+			'width': 10,
+			'align': 'right'
+		    }, {
+		        'label': 'M1 DEP',
+			'width': 9,
+			'align': 'right'
+		    }, {
+		        'label': 'M1 BAL',
+			'width': 10,
+			'align': 'right'
+		    } ]
+		});
+		printf('\n');
+	}
+
+	i0 = m0.totalInterest();
+	i1 = m1.totalInterest();
+	v0 = a0[a0.length - 1].balanceAfter;
+	v1 = a1[a1.length - 1].balanceAfter;
+	idelta = i0 - i1;
+	vdelta = v1 - v0;
+
+	[
+	    [ 'loan 1 total interest paid', i0 ],
+	    [ 'loan 1 investment balance',  v0 ],
+	    [ 'loan 2 total interest paid', i1 ],
+	    [ 'loan 2 investment balance',  v1 ],
+	    [ ],
+	    [ 'loan 1 interest cost, relative to loan 2',    idelta ],
+	    [ 'loan 1 opportunity cost, relative to loan 2', vdelta ],
+	    [ 'LOAN 1 NET COST, RELATIVE TO LOAN 2',         idelta + vdelta ]
+	].forEach(function (row) {
+		if (row.length === 0) {
+			printf('\n');
+			return;
+		}
+
+		printf('%-44s  $ %10s\n', row[0] + ':', row[1].toFixed(2));
+	});
 }
 
-function usage(err)
+function accumDelta(history, delta, investrate)
 {
-	if (err)
-		fprintf(process.stderr, '%s: %s\n', mcArg0, err.message);
-	fprintf(process.stderr, mcUsageMessage + '\n', mcArg0);
-	process.exit(2);
-}
+	var deposit, mrate, last, balanceBefore, gain, balanceAfter;
 
-function fatal(err)
-{
-	fprintf(process.stderr, '%s: %s\n', mcArg0, err.message);
-	process.exit(1);
+	deposit = Math.max(0, delta);
+
+	if (history.length === 0) {
+		history.push({
+		    'balanceBefore': 0,
+		    'gain': 0,
+		    'deposit': deposit,
+		    'balanceAfter': deposit
+		});
+		return;
+	}
+
+	last = history[history.length - 1];
+	mrate = investrate / 12;
+
+	balanceBefore = last.balanceAfter;
+	gain = balanceBefore * mrate;
+	balanceAfter = balanceBefore + gain + deposit;
+	history.push({
+	    'balanceBefore': balanceBefore,
+	    'gain': gain,
+	    'deposit': deposit,
+	    'balanceAfter': balanceAfter
+	});
 }
 
 function parseTimeValue(period)
