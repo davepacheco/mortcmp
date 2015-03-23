@@ -17,6 +17,7 @@ NPM		 = npm
 #
 # Files
 #
+BASH_FILES       = $(shell find test -name '*.sh')
 JS_FILES	:= bin/mortcmp $(shell find lib -name '*.js')
 JSL_FILES_NODE   = $(JS_FILES)
 JSSTYLE_FILES	 = $(JS_FILES)
