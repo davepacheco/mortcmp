@@ -77,9 +77,9 @@ term is a measure of "partial" opportunity cost of the other loan.  The
 difference in these values is a measure of the actual opportunity cost of each
 loan.
 
-Here's an example comparing a 10/1 ARM starting at 2% and going up to 5% after
-10 years with a fixed-rate 3.75% loan, using a hypothetical investment return
-of 10%:
+Here's an example comparing a 10/1 ARM starting at 3.25% and going up to 8.25%
+after 10 years with a fixed-rate 3.75% loan, using a hypothetical investment
+return of 10%:
 
     $ mortcmp --rate=0.0325:10y --rate=0.0825 \
           --compare --rate=0.0375 --investment=0.10 300000
